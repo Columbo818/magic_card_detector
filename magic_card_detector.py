@@ -2,9 +2,11 @@
 Module for detecting and recognizing Magic: the Gathering cards from an image.
 author: Timo Ikonen
 email: timo.ikonen (at) iki.fi
+modified: Charles Miller
+email: ch(at)rles.pro
 """
-
 import glob
+import json
 import os
 import cProfile
 import pstats
@@ -14,7 +16,10 @@ import argparse
 from copy import deepcopy
 from itertools import product
 from dataclasses import dataclass
+from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
 
+import requests
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -591,7 +596,9 @@ class MagicCardDetector:
     def __init__(self, output_path):
         self.reference_images = []
         self.test_images = []
+        self.threads = []
         self.output_path = output_path
+        self.threads_done = False
 
         self.verbose = False
         self.visual = False
@@ -601,6 +608,7 @@ class MagicCardDetector:
 
         self.clahe = cv2.createCLAHE(clipLimit=2.0,
                                      tileGridSize=(8, 8))
+        print('Outputting to {}'.format(output_path))
 
     def export_reference_data(self, path):
         """
@@ -643,6 +651,37 @@ class MagicCardDetector:
             self.reference_images.append(
                 ReferenceImage(img_name, img, self.clahe))
         print('Done.')
+
+    def get_card(self, card):
+        """
+        Gets artwork and hashes for a card
+        """
+        resp = requests.get(card['imageUrl'])
+        content = resp.content
+        arr = np.asarray(bytearray(content), dtype=np.uint8)
+        image = cv2.imdecode(arr, -1)
+        img_name = card['name']
+        print("Processing {}, multiverseID: {}".format(img_name, card['multiverseid']))
+        self.reference_images.append(ReferenceImage(img_name, image, self.clahe))
+
+    def read_and_adjust_reference_images_from_url(self, path):
+        """
+        Reads and histogram-adjusts a reference image.
+        Pre-calculates the hashes of the image from cards.json.
+        """
+        print('Reading images from ' + str(path))
+
+        with open(path) as json_file:
+            executor = ThreadPoolExecutor(60)
+            cards = json.load(json_file)
+            for c in cards:
+                try:
+                    url = c['imageUrl']
+                except:
+                    continue
+                t = executor.submit(self.get_card, c)
+                self.threads.append(t)
+            print('Done.')
 
     def read_and_adjust_test_images(self, path):
         """
@@ -689,7 +728,7 @@ class MagicCardDetector:
             plt.imshow(thresh)
             plt.show()
 
-        _, contours, _ = cv2.findContours(
+        contours,_ = cv2.findContours(
             np.uint8(thresh), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         return contours
 
@@ -704,11 +743,11 @@ class MagicCardDetector:
         _, thr_b = cv2.threshold(blue, 110, 255, cv2.THRESH_BINARY)
         _, thr_g = cv2.threshold(green, 110, 255, cv2.THRESH_BINARY)
         _, thr_r = cv2.threshold(red, 110, 255, cv2.THRESH_BINARY)
-        _, contours_b, _ = cv2.findContours(
+        contours_b, _ = cv2.findContours(
             np.uint8(thr_b), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        _, contours_g, _ = cv2.findContours(
+        contours_g, _ = cv2.findContours(
             np.uint8(thr_g), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        _, contours_r, _ = cv2.findContours(
+        contours_r, _ = cv2.findContours(
             np.uint8(thr_r), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         contours = contours_b + contours_g + contours_r
         if self.visual and self.verbose:

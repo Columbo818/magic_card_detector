@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "lodash": "^4.17.20",
+    "node-fetch": "^2.6.1",
+    "promise-parallel-throttle": "^3.3.0"
+  },
+  "type": "module"
+}
